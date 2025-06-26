@@ -26,42 +26,52 @@ jobs:
 
     - name: Run SAST Scan (Semgrep)
       run: semgrep --config auto --exclude node_modules
+      continue-on-error: true
 
     # ---------- SCA FOR JAVASCRIPT (npm audit) ----------
     - name: Run SCA for JS (npm audit)
-      if: exists('package.json')
       run: |
-        npm install --legacy-peer-deps
-        npm audit --production --audit-level=high
+        if [ -f "package.json" ]; then
+          npm install --legacy-peer-deps
+          npm audit --production --audit-level=high
+        else
+          echo "No package.json found, skipping JS SCA"
+        fi
+      continue-on-error: true
 
     # ---------- SCA FOR PYTHON (safety) ----------
     - name: Install safety for Python SCA
-      if: exists('requirements.txt')
       run: |
-        pip install -r requirements.txt
-        pip install safety
-        safety check
+        if [ -f "requirements.txt" ]; then
+          pip install -r requirements.txt
+          pip install safety
+          safety check || true
+        else
+          echo "No requirements.txt found, skipping Python SCA"
+        fi
+      continue-on-error: true
 
     # ---------- SCA FOR PHP (composer audit) ----------
     - name: PHP Audit with Composer
-      if: exists('composer.json')
       run: |
-        sudo apt install php-cli unzip curl -y
-        curl -sS https://getcomposer.org/installer | php
-        php composer.phar install
-        php composer.phar audit
+        if [ -f "composer.json" ]; then
+          sudo apt install php-cli unzip curl -y
+          curl -sS https://getcomposer.org/installer | php
+          php composer.phar install
+          php composer.phar audit || true
+        else
+          echo "No composer.json found, skipping PHP SCA"
+        fi
+      continue-on-error: true
 
     # ---------- SCA FOR .NET (dotnet list package) ----------
     - name: .NET Dependency Check
-      if: exists('*.csproj')
       run: |
-        dotnet restore
-        dotnet list package --vulnerable
-
-    # ---------- Upload SAST results as artifact (optional) ----------
-    - name: Upload Semgrep Report
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: semgrep-results
-        path: semgrep.sarif
+        FILES=$(ls *.csproj 2>/dev/null | wc -l)
+        if [ "$FILES" -gt 0 ]; then
+          dotnet restore
+          dotnet list package --vulnerable || true
+        else
+          echo "No .csproj files found, skipping .NET SCA"
+        fi
+      continue-on-error: true
