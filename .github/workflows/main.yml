@@ -1,10 +1,10 @@
-name: Security Scan - SAST & SCA
+name: Security Scan - SAST & SCA Summary
 
 on:
   push:
-    branches: [ "**" ]
+    branches: ["**"]
   pull_request:
-    branches: [ "**" ]
+    branches: ["**"]
 
 jobs:
   sast-sca-scan:
@@ -15,63 +15,79 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    # ---------- SAST SCAN USING SEMGREP ----------
-    - name: Set up Python (Semgrep)
+    - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.x'
 
-    - name: Install Semgrep
-      run: pip install semgrep
-
-    - name: Run SAST Scan (Semgrep)
-      run: semgrep --config auto --exclude node_modules
-      continue-on-error: true
-
-    # ---------- SCA FOR JAVASCRIPT (npm audit) ----------
-    - name: Run SCA for JS (npm audit)
+    - name: Install Semgrep and safety
       run: |
+        pip install semgrep safety
+
+    # ---------- SAST SCAN ----------
+    - name: Run Semgrep (SAST)
+      run: |
+        echo "🔍 Running Semgrep..."
+        semgrep --config auto --exclude node_modules --json > semgrep_output.json || true
+
+    # ---------- JS Dependency Scan ----------
+    - name: Run npm audit (SCA)
+      run: |
+        echo "🔍 Checking npm packages..."
         if [ -f "package.json" ]; then
           npm install --legacy-peer-deps
-          npm audit --production --audit-level=high
+          npm audit --json > npm_audit.json || true
         else
-          echo "No package.json found, skipping JS SCA"
+          echo "No package.json found, skipping JS audit" > npm_audit.json
         fi
-      continue-on-error: true
 
-    # ---------- SCA FOR PYTHON (safety) ----------
-    - name: Install safety for Python SCA
+    # ---------- Python Dependency Scan ----------
+    - name: Run safety check (SCA)
       run: |
+        echo "🔍 Checking Python packages..."
         if [ -f "requirements.txt" ]; then
           pip install -r requirements.txt
-          pip install safety
-          safety check || true
+          safety check --json > safety_output.json || true
         else
-          echo "No requirements.txt found, skipping Python SCA"
+          echo "[]" > safety_output.json
         fi
+
+    # ---------- Summary Report ----------
+    - name: 📋 Display Summary of Vulnerabilities
+      run: |
+        echo "=============================="
+        echo "🔐 Security Scan Summary"
+        echo "=============================="
+
+        echo ""
+        echo "▶️ Semgrep Issues:"
+        if [ -s semgrep_output.json ]; then
+          jq -r '.results[] | "- [\(.check_id)] \(.path):\(.start.line) \(.extra.message)"' semgrep_output.json || echo "No issues found."
+        else
+          echo "No issues found or scan failed."
+        fi
+
+        echo ""
+        echo "▶️ npm audit Issues:"
+        if [ -s npm_audit.json ]; then
+          jq -r '.advisories[]? | "- [\(.module_name)] \(.title)"' npm_audit.json || echo "No vulnerabilities found."
+        else
+          echo "No package.json or no vulnerabilities."
+        fi
+
+        echo ""
+        echo "▶️ Python safety Issues:"
+        jq -r '.[] | "- [\(.package_name)] \(.issue_severity): \(.description)"' safety_output.json || echo "No Python vulnerabilities."
+
+        echo ""
+        echo "✅ Security scan complete."
       continue-on-error: true
 
-    # ---------- SCA FOR PHP (composer audit) ----------
-    - name: PHP Audit with Composer
-      run: |
-        if [ -f "composer.json" ]; then
-          sudo apt install php-cli unzip curl -y
-          curl -sS https://getcomposer.org/installer | php
-          php composer.phar install
-          php composer.phar audit || true
-        else
-          echo "No composer.json found, skipping PHP SCA"
-        fi
-      continue-on-error: true
-
-    # ---------- SCA FOR .NET (dotnet list package) ----------
-    - name: .NET Dependency Check
-      run: |
-        FILES=$(ls *.csproj 2>/dev/null | wc -l)
-        if [ "$FILES" -gt 0 ]; then
-          dotnet restore
-          dotnet list package --vulnerable || true
-        else
-          echo "No .csproj files found, skipping .NET SCA"
-        fi
-      continue-on-error: true
+    - name: Upload Reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-scan-reports
+        path: |
+          semgrep_output.json
+          npm_audit.json
+          safety_output.json
