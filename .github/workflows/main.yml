@@ -1,0 +1,67 @@
+name: Security Scan - SAST & SCA
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+
+jobs:
+  sast-sca-scan:
+    runs-on: ubuntu-latest
+    name: Run SAST and SCA Scans
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # ---------- SAST SCAN USING SEMGREP ----------
+    - name: Set up Python (Semgrep)
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Install Semgrep
+      run: pip install semgrep
+
+    - name: Run SAST Scan (Semgrep)
+      run: semgrep --config auto --exclude node_modules
+
+    # ---------- SCA FOR JAVASCRIPT (npm audit) ----------
+    - name: Run SCA for JS (npm audit)
+      if: exists('package.json')
+      run: |
+        npm install --legacy-peer-deps
+        npm audit --production --audit-level=high
+
+    # ---------- SCA FOR PYTHON (safety) ----------
+    - name: Install safety for Python SCA
+      if: exists('requirements.txt')
+      run: |
+        pip install -r requirements.txt
+        pip install safety
+        safety check
+
+    # ---------- SCA FOR PHP (composer audit) ----------
+    - name: PHP Audit with Composer
+      if: exists('composer.json')
+      run: |
+        sudo apt install php-cli unzip curl -y
+        curl -sS https://getcomposer.org/installer | php
+        php composer.phar install
+        php composer.phar audit
+
+    # ---------- SCA FOR .NET (dotnet list package) ----------
+    - name: .NET Dependency Check
+      if: exists('*.csproj')
+      run: |
+        dotnet restore
+        dotnet list package --vulnerable
+
+    # ---------- Upload SAST results as artifact (optional) ----------
+    - name: Upload Semgrep Report
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: semgrep-results
+        path: semgrep.sarif
